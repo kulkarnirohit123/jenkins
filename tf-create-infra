@@ -1,0 +1,91 @@
+pipeline {
+
+  agent any
+
+  /*
+    Expected Jenkins variables: 
+    filename: jar file name
+    environment: Environment name
+    region: AWS Region
+    bucket: S3 Bucket name to hold terraform state file
+    skip_input: prompt to run terraform apply
+  */
+
+  environment {
+    project = "<project-name>"
+    s3_key = "${project}/${environment}/${project}-${environment}.tfstat"
+    project_dir = "<main.tf location>"
+    tf_plan_file = ".terraform/latest-plan"
+    tf_override_vars = ""
+    // -var code_bucketkey=${filename}
+    tf_vars_file = "${environment}.tfvars"
+    skip_input = "${skip_input}"
+    tf_command = "terraform"
+  }
+
+  stages {
+    
+    stage('TF clean') {
+      steps {
+        dir(project_dir) {
+          sh 'rm -rf .terraform'
+        }
+      }      
+    }
+
+    stage('TF Install') {
+      steps {
+        dir(project_dir) {
+          sh 'tfenv install'
+        }
+      }      
+    }
+
+    stage('TF Init') {
+      steps {
+        dir(project_dir) {
+          sh '${tf_command} init \
+            -backend-config="bucket=${bucket}" \
+            -backend-config="key=${s3_key}" \
+            -backend-config="region=${region}" \
+            -backend=true \
+            -force-copy \
+            -get=true \
+            -input=false'
+        }
+      }      
+    }
+
+    stage('TF Plan') {
+      steps {
+        dir(project_dir) {
+          sh '${tf_command} plan -no-color -var-file="${tf_vars_file}" ${tf_override_vars} -out ${tf_plan_file}'
+        }
+      }      
+    }
+
+    stage('Approval') {
+      when {
+      
+           expression { skip_input == 'false' }
+            
+                
+            }
+      steps {
+        script {
+          def userInput = input(id: 'confirm', message: 'Apply Terraform?', parameters: [ [$class: 'BooleanParameterDefinition', defaultValue: false, description: 'Apply terraform', name: 'confirm'] ])
+        }
+      }
+    }
+
+    stage('TF Apply') {
+      steps {
+        dir(project_dir) {
+          sh '${tf_command} apply -no-color --input=false ${tf_plan_file}'
+        }
+      }
+    }
+
+  } 
+
+}
